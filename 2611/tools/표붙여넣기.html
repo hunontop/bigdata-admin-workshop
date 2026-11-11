@@ -76,8 +76,8 @@ footer{max-width:1040px;margin:0 auto;padding:0 16px 30px;color:var(--sub);font-
     <div><b class="hint">보낼 열(누르면 빠집니다 · 이름 · 연락처 같은 개인정보 열은 빼세요)</b><div class="chips" id="cols"></div></div>
     <div class="row" style="margin-top:10px"><b>줄 거르기</b><select id="fcol"><option value="">거르지 않음</option></select><span class="hint">한 열을 고르면 그 열의 값마다 켜고 끌 수 있습니다.</span></div>
     <div class="chips" id="fvals"></div>
-    <div class="warn" id="lvlWarn" hidden></div>
     <div class="legend">미리 보기 <i style="background:var(--sum)"></i>합계 · 소계 · 평균 줄과 「계」 열 <i style="background:var(--note)"></i>표 위아래 설명(제목 · 단위 · 각주) · <b>줄을 누르면 합계 줄로 지정 · 해제</b>(파란 줄 = 직접 고른 것)</div>
+    <p class="hint" id="pvn" hidden></p>
     <div class="wrap"><table id="prev"></table></div>
   </div>
 
@@ -127,7 +127,6 @@ const SUM = /^\s*(합\s*계|소\s*계|총\s*계|계|총\s*합\s*계|전\s*체|�
 // 「광주 소계」 · 「구 합계(A)」처럼 낱말로 들어 있을 때만(「총계획」 · 「소계약」은 아니다)
 const SUMIN = /(^|[\s(（·_\-])(합\s*계|소\s*계|총\s*계|총\s*합\s*계)($|[\s)）·_\-(（])|grand\s*total|sub\s*total|\btotal\b/i;
 // 같은 것을 두 단계로 담은 표(위 단계 + 아래 단계) — 한 열에 두 값이 함께 있으면 알린다
-const LEVELS = [['광역', '기초'], ['시도', '시군구'], ['시·도', '시·군·구'], ['본청', '사업소'], ['본부', '지사'], ['본사', '지사']];
 const isYear = v => /^\s*(19|20)\d{2}\s*(년)?\s*$/.test(String(v));
 let wb = null, raw = [], fname = '', st = {};
 
@@ -187,11 +186,6 @@ function build(resetCols) {
   if (resetCols) st.over = {};   // 사람이 누른 줄(번호 → 합계 여부) — 표나 머리글이 바뀌면 지운다
   // 합계 열: 머리글 이름이 계 · 합계 · 소계 · 총계 · 전체 · total(「2024년_계」처럼 끝에 붙은 것도)
   st.sumCols = heads.map(h => h.split('_').some(p => SUM.test(p) && !/평\s*균|average|avg/i.test(p)));
-  // 섞인 단계: 한 열에 「광역」과 「기초」처럼 위 · 아래 단계 값이 함께 있으면 알린다
-  st.lvl = null;
-  heads.forEach((h, c) => { if (st.lvl) return; const vs = new Set(body.map(r => String(r[c] ?? '').replace(/\s/g, '')));
-    const p = LEVELS.find(([u, d]) => vs.has(u.replace(/\s/g, '')) && vs.has(d.replace(/\s/g, '')));
-    if (p) st.lvl = {c, h, p}; });
   sumApply();
   if (resetCols) {
     $('#cols').innerHTML = heads.map((h, i) => `<label><input type="checkbox" data-c="${i}" checked> ${esc(h)}</label>`).join('');
@@ -199,15 +193,6 @@ function build(resetCols) {
     $('#fvals').innerHTML = '';
   }
   render();
-}
-// 섞인 단계 알림 — 「줄 거르기」로 한 단계만 남기면 사라진다
-function lvlWarn() {
-  const lw = $('#lvlWarn'), L = st.lvl;
-  if (!L) { lw.hidden = true; return; }
-  const fc = $('#fcol').value, on = fc === String(L.c) ? new Set([...document.querySelectorAll('#fvals input')].filter(x => x.checked).map(x => x.dataset.v.replace(/\s/g, ''))) : null;
-  const both = !on || (on.has(L.p[0].replace(/\s/g, '')) && on.has(L.p[1].replace(/\s/g, '')));
-  lw.hidden = !both;
-  lw.textContent = `「${L.h}」 열에 「${L.p[0]}」 · 「${L.p[1]}」 값이 함께 있습니다. 같은 것을 두 단계로 담은 표라면 다 더할 때 두 번 셉니다. 「줄 거르기」에서 「${L.h}」를 골라 하나만 남기세요.`;
 }
 // 자동으로 찾은 합계 줄 + 사람이 누른 것 → st.sumRows
 function sumApply() {
@@ -256,7 +241,9 @@ function render() {
     return `<tr class="${cls}"${data ? ` data-i="${bi}" title="누르면 합계 줄로 지정 · 해제"` : ''}>`
       + r.map((v, c) => `<${tag}${(head || data) && st.sumCols[c] ? ' class="sumcol"' : ''}>${esc(v ?? '')}</${tag}>`).join('') + '</tr>';
   }).join('');
-  lvlWarn();
+  const nd = end - top - H, pv = $('#pvn');   // 미리 보기 줄 수 안내(11-11 사용자 — 처음부터 기초가 안 보여 헷갈렸다)
+  pv.hidden = nd <= 60;
+  pv.textContent = `미리 보기는 처음 60줄만 보입니다(전체 ${nd.toLocaleString('ko-KR')}줄 · 가운데 「…」는 생략). 줄 거르기는 미리 보기에 반영되지 않습니다. 보내는 글에는 거르고 남은 줄이 모두 들어갑니다.`;
   out();
 }
 $('#prev').addEventListener('click', e => {   // 줄을 눌러 합계 줄로 지정 · 해제(자동으로 찾은 것도 풀 수 있다)
