@@ -37,6 +37,9 @@ table{border-collapse:collapse;font-size:13px;width:max-content;min-width:100%}
 th,td{border-bottom:1px solid var(--line);padding:4px 8px;text-align:left;white-space:nowrap}
 th{position:sticky;top:0;background:var(--wash)}
 tr.sum td{background:var(--sum)}
+tr.pick{cursor:pointer} tr.pick:hover td{outline:1px dashed var(--blue);outline-offset:-1px}
+tr.man td:first-child{box-shadow:inset 4px 0 0 var(--blue)}
+th.sumcol,td.sumcol{background:var(--sum)}
 tr.note td{background:var(--note);color:var(--sub)}
 td.k{color:var(--sub);font-size:11px}
 .legend{font-size:12px;color:var(--sub);margin:6px 0}
@@ -73,7 +76,8 @@ footer{max-width:1040px;margin:0 auto;padding:0 16px 30px;color:var(--sub);font-
     <div><b class="hint">보낼 열(누르면 빠집니다 · 이름 · 연락처 같은 개인정보 열은 빼세요)</b><div class="chips" id="cols"></div></div>
     <div class="row" style="margin-top:10px"><b>줄 거르기</b><select id="fcol"><option value="">거르지 않음</option></select><span class="hint">한 열을 고르면 그 열의 값마다 켜고 끌 수 있습니다.</span></div>
     <div class="chips" id="fvals"></div>
-    <div class="legend">미리 보기 <i style="background:var(--sum)"></i>합계 · 소계 줄 <i style="background:var(--note)"></i>표 위아래 설명(제목 · 단위 · 각주)</div>
+    <div class="warn" id="lvlWarn" hidden></div>
+    <div class="legend">미리 보기 <i style="background:var(--sum)"></i>합계 · 소계 · 평균 줄과 「계」 열 <i style="background:var(--note)"></i>표 위아래 설명(제목 · 단위 · 각주) · <b>줄을 누르면 합계 줄로 지정 · 해제</b>(파란 줄 = 직접 고른 것)</div>
     <div class="wrap"><table id="prev"></table></div>
   </div>
 
@@ -118,8 +122,13 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
 </script>
 <script>
 const $ = s => document.querySelector(s);
-const SUM = /^\s*(합\s*계|소\s*계|총\s*계|계|총\s*합\s*계|전\s*체|누\s*계|total|subtotal|sum)\s*$/i;
-const SUMIN = /(합\s*계|소\s*계|총\s*계)/;
+// 합계 성격의 줄 · 열 이름(11-11 넓힘: 전국 · 평균 · 계(A) · 합계(가+나) · grand total · 영어 낱말도 「포함」으로)
+const SUM = /^\s*(합\s*계|소\s*계|총\s*계|계|총\s*합\s*계|전\s*체|누\s*계|전\s*국|평\s*균|grand\s*total|total|sub\s*total|sum|average|avg)\s*([(\[（][^)\]）]*[)\]）])?\s*$/i;
+// 「광주 소계」 · 「구 합계(A)」처럼 낱말로 들어 있을 때만(「총계획」 · 「소계약」은 아니다)
+const SUMIN = /(^|[\s(（·_\-])(합\s*계|소\s*계|총\s*계|총\s*합\s*계)($|[\s)）·_\-(（])|grand\s*total|sub\s*total|\btotal\b/i;
+// 같은 것을 두 단계로 담은 표(위 단계 + 아래 단계) — 한 열에 두 값이 함께 있으면 알린다
+const LEVELS = [['광역', '기초'], ['시도', '시군구'], ['시·도', '시·군·구'], ['본청', '사업소'], ['본부', '지사'], ['본사', '지사']];
+const isYear = v => /^\s*(19|20)\d{2}\s*(년)?\s*$/.test(String(v));
 let wb = null, raw = [], fname = '', st = {};
 
 function toast(t) { const n = $('#toast'); n.textContent = t; n.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => n.classList.remove('on'), 2200); }
@@ -157,7 +166,8 @@ function analyse() {
   let top = 0; while (top < a.length - 1 && filled(a[top]) <= 1 && wide > 2) top++;          // 제목 · 단위 줄
   let end = a.length; while (end > top + 1 && (filled(a[end - 1]) <= 1 || /^\s*(※|\*|주\)|자료|출처)/.test(String(a[end - 1].find(v => !blankish(v)) || '')))) end--;   // 각주
   // 머리글 줄 수 어림: 숫자가 처음으로 많이 나오는 줄 앞까지(최대 3)
-  let h = 1; for (let r = top; r < Math.min(end, top + 4); r++) { const n = a[r].filter(v => !blankish(v) && isNum(v)).length; if (n >= Math.max(1, filled(a[r]) / 2)) { h = Math.max(1, r - top); break; } }
+  // 연도(2023 · 2024년)만 적힌 줄은 머리글일 수 있어 숫자로 세지 않는다(11-11 · 두 줄 머리글의 아랫줄이 연도인 표)
+  let h = 1; for (let r = top; r < Math.min(end, top + 4); r++) { const n = a[r].filter(v => !blankish(v) && isNum(v) && !isYear(v)).length; if (n >= Math.max(1, filled(a[r]) / 2)) { h = Math.max(1, r - top); break; } }
   st = {a, top, end, notesTop: a.slice(0, top).map(r => r.filter(v => !blankish(v)).join(' ')), notesBot: a.slice(end).map(r => r.filter(v => !blankish(v)).join(' '))};
   $('#hdr').value = Math.min(h, 3);
   build(true);
@@ -172,16 +182,40 @@ function build(resetCols) {
   let heads = hr[0].map((_, c) => { const parts = []; hr.forEach(r => { const v = String(r[c] ?? '').trim(); if (v && parts[parts.length - 1] !== v) parts.push(v); }); return parts.join('_') || `열${c + 1}`; });
   const seen = {}; heads = heads.map(h => (seen[h] = (seen[h] || 0) + 1) > 1 ? `${h}_${seen[h]}` : h);
   const body = a.slice(top + H, end);
-  const isSum = r => r.slice(0, 3).some(v => SUM.test(String(v))) || (!blankish(r[0]) && SUMIN.test(String(r[0])));
-  st.heads = heads; st.body = body; st.sumRows = body.map(isSum);
+  const isSum = r => r.slice(0, 3).some(v => !isNum(v) && (SUM.test(String(v)) || SUMIN.test(String(v))));
+  st.heads = heads; st.body = body; st.autoSum = body.map(isSum);
+  if (resetCols) st.over = {};   // 사람이 누른 줄(번호 → 합계 여부) — 표나 머리글이 바뀌면 지운다
+  // 합계 열: 머리글 이름이 계 · 합계 · 소계 · 총계 · 전체 · total(「2024년_계」처럼 끝에 붙은 것도)
+  st.sumCols = heads.map(h => h.split('_').some(p => SUM.test(p) && !/평\s*균|average|avg/i.test(p)));
+  // 섞인 단계: 한 열에 「광역」과 「기초」처럼 위 · 아래 단계 값이 함께 있으면 알린다
+  st.lvl = null;
+  heads.forEach((h, c) => { if (st.lvl) return; const vs = new Set(body.map(r => String(r[c] ?? '').replace(/\s/g, '')));
+    const p = LEVELS.find(([u, d]) => vs.has(u.replace(/\s/g, '')) && vs.has(d.replace(/\s/g, '')));
+    if (p) st.lvl = {c, h, p}; });
+  sumApply();
   if (resetCols) {
     $('#cols').innerHTML = heads.map((h, i) => `<label><input type="checkbox" data-c="${i}" checked> ${esc(h)}</label>`).join('');
     $('#fcol').innerHTML = '<option value="">거르지 않음</option>' + heads.map((h, i) => `<option value="${i}">${esc(h)}</option>`).join('');
     $('#fvals').innerHTML = '';
   }
-  const n = st.sumRows.filter(Boolean).length;
-  $('#sumInfo').textContent = n ? `찾은 합계 · 소계 줄 ${n}개(노란 줄)` : '합계 · 소계 줄을 찾지 못했습니다';
   render();
+}
+// 섞인 단계 알림 — 「줄 거르기」로 한 단계만 남기면 사라진다
+function lvlWarn() {
+  const lw = $('#lvlWarn'), L = st.lvl;
+  if (!L) { lw.hidden = true; return; }
+  const fc = $('#fcol').value, on = fc === String(L.c) ? new Set([...document.querySelectorAll('#fvals input')].filter(x => x.checked).map(x => x.dataset.v.replace(/\s/g, ''))) : null;
+  const both = !on || (on.has(L.p[0].replace(/\s/g, '')) && on.has(L.p[1].replace(/\s/g, '')));
+  lw.hidden = !both;
+  lw.textContent = `「${L.h}」 열에 「${L.p[0]}」 · 「${L.p[1]}」 값이 함께 있습니다. 같은 것을 두 단계로 담은 표라면 다 더할 때 두 번 셉니다. 「줄 거르기」에서 「${L.h}」를 골라 하나만 남기세요.`;
+}
+// 자동으로 찾은 합계 줄 + 사람이 누른 것 → st.sumRows
+function sumApply() {
+  st.sumRows = st.autoSum.map((v, i) => (i in st.over ? st.over[i] : v));
+  const n = st.sumRows.filter(Boolean).length, m = Object.keys(st.over).length;
+  const cols = (st.sumCols || []).map((v, i) => v ? st.heads[i] : null).filter(Boolean);
+  $('#sumInfo').textContent = (n ? `합계 · 소계 줄 ${n}개(노란 줄${m ? ` · 직접 고친 것 ${m}개` : ''})` : '합계 · 소계 줄을 찾지 못했습니다 · 있으면 줄을 눌러 지정하세요')
+    + (cols.length ? ` · 「계」 열 ${cols.length}개: ${cols.join(', ')}` : '');
 }
 function filterVals() {
   const c = $('#fcol').value; if (c === '') { $('#fvals').innerHTML = ''; render(); return; }
@@ -206,7 +240,7 @@ function current() {
     rows.push(out);
   });
   const heads = cols.map(c => st.heads[c]).concat(sumMode === 'mark' ? ['구분_합계'] : []);
-  return {heads, rows, sumMode, zero, fc, allowed};
+  return {heads, rows, sumMode, zero, fc, allowed, colsIdx: cols};
 }
 
 function render() {
@@ -215,12 +249,22 @@ function render() {
   const cut = a.slice(0, Math.min(a.length, top + H + 60)).concat(end < a.length ? [['…']] : []).concat(a.slice(end));
   $('#prev').innerHTML = cut.map((r, i) => {
     const gi = i < top + H + 60 ? i : a.length - (cut.length - i);
-    const cls = gi < top || gi >= end ? 'note' : (gi >= top + H && st.sumRows[gi - top - H] ? 'sum' : '');
+    const bi = gi - top - H, data = gi >= top + H && gi < end && r[0] !== '…';
+    const cls = (gi < top || gi >= end ? 'note' : (data && st.sumRows[bi] ? 'sum' : '')) + (data ? ' pick' : '') + (data && bi in st.over ? ' man' : '');
     const tag = gi >= top && gi < top + H ? 'th' : 'td';
-    return `<tr class="${cls}">` + r.map(v => `<${tag}>${esc(v ?? '')}</${tag}>`).join('') + '</tr>';
+    const head = gi >= top && gi < top + H;
+    return `<tr class="${cls}"${data ? ` data-i="${bi}" title="누르면 합계 줄로 지정 · 해제"` : ''}>`
+      + r.map((v, c) => `<${tag}${(head || data) && st.sumCols[c] ? ' class="sumcol"' : ''}>${esc(v ?? '')}</${tag}>`).join('') + '</tr>';
   }).join('');
+  lvlWarn();
   out();
 }
+$('#prev').addEventListener('click', e => {   // 줄을 눌러 합계 줄로 지정 · 해제(자동으로 찾은 것도 풀 수 있다)
+  const tr = e.target.closest('tr[data-i]'); if (!tr) return;
+  const i = +tr.dataset.i, now = !st.sumRows[i];
+  if (now === st.autoSum[i]) delete st.over[i]; else st.over[i] = now;
+  sumApply(); render();
+});
 
 function out() {
   const c = current(), md = document.querySelector('input[name=fmt]:checked').value === 'md';
@@ -231,6 +275,7 @@ function out() {
     `아래는 「${fname}」의 표입니다. 첫 줄은 머리글이고, ${c.rows.length}줄입니다.`,
     unit ? `단위: ${unit.replace(/^.*?단위\s*[:：]?\s*/, '').replace(/[()]/g, '').trim()}` : '',
     st.sumRows.some(Boolean) ? (c.sumMode === 'drop' ? '합계 · 소계 줄은 뺐습니다. 합계가 필요하면 계산하세요.' : '「구분_합계」 열이 「합계」인 줄은 합계 · 소계 줄입니다. 다른 줄과 더하지 마세요.') : '',
+    (() => { const sc = c.colsIdx.filter(i => st.sumCols[i]).map(i => st.heads[i]); return sc.length ? `「${sc.join('」 · 「')}」 열은 같은 줄의 다른 열을 더한 값입니다. 다시 더하지 마세요.` : ''; })(),
     c.zero ? '빈칸은 0으로 바꿨습니다.' : '빈칸은 자료가 없다는 뜻입니다(0이 아닙니다).',
     fcName ? `「${fcName}」 값이 ${[...c.allowed].map(v => v || '(빈칸)').join(' · ')}인 줄만 남겼습니다.` : '',
     st.notesTop.filter(t => !/단위/.test(t)).length ? '표 위 설명: ' + st.notesTop.filter(t => !/단위/.test(t)).join(' / ') : '',
